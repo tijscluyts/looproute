@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from './node_modules/three/build/three.module.js';
 import { DraggableCube } from './cube.js';
 
 let camera, scene, renderer;
