@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DraggableCube } from './Cube.js';
+import { DraggableCube } from './cube.js';
 
 let camera, scene, renderer;
 
