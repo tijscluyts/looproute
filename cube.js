@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 
 export class DraggableCube {
-    constructor(scene, camera, renderer) {
+    constructor(scene, camera, renderer, world) {
         this.camera = camera;
         this.renderer = renderer;
+        this.world = world;
 
         // Create cube
         function createDiceFace(pipCount) {
@@ -59,6 +61,13 @@ export class DraggableCube {
         this.mesh.position.y = 0.5;
         scene.add(this.mesh);
 
+        // Physics body
+        this.body = new CANNON.Body({ mass: 1 });
+        this.body.addShape(new CANNON.Box(new CANNON.Vec3(0.5, 0.5, 0.5)));
+        this.body.position.set(0, 0.5, 0);
+        this.body.material = new CANNON.Material({ friction: 0.4, restitution: 0.3 });
+        this.world.addBody(this.body);
+
         // Internal state
         this.dragging = false;
         this.dragOffset = new THREE.Vector3();
@@ -84,6 +93,10 @@ export class DraggableCube {
         const intersects = this.raycaster.intersectObject(this.mesh);
         if (intersects.length > 0) {
             this.dragging = true;
+            
+            // Disable physics while dragging
+            this.body.type = CANNON.Body.KINEMATIC;
+            
             this.dragPlane.setFromNormalAndCoplanarPoint(
                 new THREE.Vector3(0, 1, 0), this.mesh.position
             );
@@ -92,8 +105,10 @@ export class DraggableCube {
 
             this.pointerMoveHandler = this.onPointerMove.bind(this);
             this.pointerUpHandler = this.onPointerUp.bind(this);
-            // In onPointerDown
-            this.mesh.position.y = 2; // lift the cube
+            
+            // Lift the cube
+            this.mesh.position.y = 2;
+            this.body.position.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z);
 
 
             document.addEventListener('pointermove', this.pointerMoveHandler);
@@ -108,17 +123,15 @@ export class DraggableCube {
         this.getMouse(event);
         this.raycaster.setFromCamera(this.mouse, this.camera);
         this.dragPlane.setFromNormalAndCoplanarPoint(
-            new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0.5, 0)
+            new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 2, 0)
         );
         if (this.raycaster.ray.intersectPlane(this.dragPlane, this.intersectPoint)) {
             this.mesh.position.copy(this.intersectPoint.sub(this.dragOffset));
-            this.mesh.position.y = 0.5;
-            // Uncomment for debug: console.log("Dragging", this.mesh.position);
+            this.mesh.position.y = 2; // Keep elevated while dragging
+            
+            // Sync physics body with mesh while dragging
+            this.body.position.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z);
         }
-        // In onPointerMove (allow moving at y=2 while dragging)
-        this.mesh.position.y = 2;
-
-
     }
 
     onPointerUp() {
@@ -126,31 +139,25 @@ export class DraggableCube {
         document.removeEventListener('pointermove', this.pointerMoveHandler);
         document.removeEventListener('pointerup', this.pointerUpHandler);
 
-        // Animate drop (or just set position)
-        this.mesh.position.y = 0.5;
-
-        // Collision detection
-        // 1. Create Box3 for cube
-        const cubeBox = new THREE.Box3().setFromObject(this.mesh);
-
-        // 2. Create Box3 for table
-        // Assuming your table mesh is called "ground" and its geometry is PlaneGeometry
-        // and positioned at y=0
-        const tableSize = 10; // (from your PlaneGeometry)
-        const tableMin = new THREE.Vector3(-tableSize/2, 0, -tableSize/2);
-        const tableMax = new THREE.Vector3( tableSize/2, 0.55, tableSize/2); // 0.55 for cube sitting exactly on table
-
-        const tableBox = new THREE.Box3(tableMin, tableMax);
-
-        // 3. Check intersection
-        const intersects = cubeBox.intersectsBox(tableBox);
-
-        if(intersects) {
-            console.log("Cube collides with the table!");
-        } else {
-            console.log("Cube does NOT collide with the table!");
-            // For realism, you may want to animate it falling down until it hits the table.
-            // Or clamp its position so it can't go below y=0.5.
+        // Re-enable physics when released
+        this.body.type = CANNON.Body.DYNAMIC;
+        
+        // Add some angular velocity for realistic rolling
+        this.body.angularVelocity.set(
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2,
+            (Math.random() - 0.5) * 2
+        );
+        
+        console.log("Cube released - physics enabled");
+    }
+    
+    // Method to update physics synchronization
+    updatePhysics() {
+        if (!this.dragging) {
+            // Sync Three.js mesh with cannon-es body
+            this.mesh.position.copy(this.body.position);
+            this.mesh.quaternion.copy(this.body.quaternion);
         }
     }
 }
