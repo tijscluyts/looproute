@@ -1,15 +1,33 @@
 {
-  "dependencies": {
-    "three": "^0.178.0"
-  },
-  "name": "dicegame",
+  "name": "looproute",
   "version": "1.0.0",
-  "main": "main.js",
+  "main": "electron/main.cjs",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build:client": "cd client && npm run build",
+    "install:server": "cd server && npm install",
+    "dist:win": "npm run build:client && npm run install:server && electron-builder -w"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.0.0"
+  },
+  "build": {
+    "appId": "com.looproute.app",
+    "productName": "LoopRoute",
+    "files": [
+      "electron/**",
+      "client/dist/**",
+      "server/**"
+    ],
+    "extraResources": [
+      {
+        "from": "server/.env",
+        "to": "server/.env"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    }
+  }
 }
