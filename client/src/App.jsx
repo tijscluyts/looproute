@@ -9,6 +9,8 @@ import {
 } from "react-leaflet";
 import L from "leaflet";
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5050";
+
 function geojsonToLatLngs(geojson) {
   const coords = geojson?.features?.[0]?.geometry?.coordinates;
   if (!coords) return [];
@@ -243,7 +245,7 @@ export default function App() {
     clearBlocked();
 
     try {
-      const resp = await fetch("http://127.0.0.1:5050/api/loop", {
+      const resp = await fetch(`${API_BASE}/api/loop`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -288,7 +290,7 @@ export default function App() {
     try {
       const blockedSegmentsPayload = buildBlockedSegmentsPayload();
 
-      const resp = await fetch("http://127.0.0.1:5050/api/reroute", {
+      const resp = await fetch(`${API_BASE}/api/reroute`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -328,7 +330,7 @@ export default function App() {
       return;
     }
 
-    const resp = await fetch("http://localhost:5050/api/gpx/from-geojson", {
+    const resp = await fetch(`${API_BASE}/api/gpx/from-geojson`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
