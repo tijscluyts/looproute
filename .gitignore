@@ -1,0 +1,13 @@
+# dependencies
+node_modules/
+
+# frontend build
+dist/
+build/
+
+# electron build output
+win-unpacked/
+*.exe
+
+# env
+.env
