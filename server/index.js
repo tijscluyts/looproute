@@ -8,6 +8,11 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  console.log(`[REQ] ${req.method} ${req.url}`);
+  next();
+});
+
 
 // -------------------- Helpers --------------------
 
@@ -528,6 +533,27 @@ function sampleCoordsEvenly(coordsLngLat, n) {
 
 app.get("/api/health", (req, res) => res.json({ ok: true, build: "debug-1" }));
 
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+
+app.get("/api/_debug/info", (req, res) => {
+  let expressVersion = null;
+  try {
+    expressVersion = require("express/package.json").version;
+  } catch (e) {
+    expressVersion = "unknown";
+  }
+
+  res.json({
+    ok: true,
+    expressVersion,
+    has_app__router: Boolean(app._router),
+    has_app_router: Boolean(app.router),
+    app_keys_sample: Object.keys(app).slice(0, 30),
+  });
+});
+
+
 app.get("/api/debug-key", (req, res) => {
   const key = process.env.ORS_API_KEY;
   res.json({
@@ -745,37 +771,35 @@ app.post("/api/gpx/from-geojson", (req, res) => {
 });
 app.get("/api/_debug/routes", (req, res) => {
   try {
-    const router = app?._router;
-    const stack = router?.stack;
+    const stack = app._router?.stack || app.router?.stack;
 
-    if (!router || !Array.isArray(stack)) {
+    if (!Array.isArray(stack)) {
       return res.json({
         ok: false,
-        reason: "No app._router.stack (router not ready or different express version)",
-        hasRouter: Boolean(router),
+        reason: "No router stack found on app._router.stack or app.router.stack",
+        has_app__router: Boolean(app._router),
+        has_app_router: Boolean(app.router),
         stackType: typeof stack,
       });
     }
 
     const routes = [];
-
     for (const layer of stack) {
       const route = layer?.route;
       if (!route?.path) continue;
 
-      const methods = Object.keys(route.methods || {}).filter(Boolean);
-      routes.push({ path: route.path, methods });
+      routes.push({
+        path: route.path,
+        methods: Object.keys(route.methods || {}).filter(Boolean),
+      });
     }
 
     res.json({ ok: true, count: routes.length, routes });
   } catch (e) {
-    res.status(500).json({
-      ok: false,
-      error: String(e),
-      stack: e?.stack,
-    });
+    res.status(500).json({ ok: false, error: String(e), stack: e?.stack });
   }
 });
+
 
 
 
