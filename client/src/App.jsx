@@ -145,6 +145,7 @@ export default function App() {
             <Popup>Waypoint {i + 1}</Popup>
           </Marker>
         ))}
+        
 
         {polyline.length > 0 && <Polyline positions={polyline} />}
       </MapContainer>
