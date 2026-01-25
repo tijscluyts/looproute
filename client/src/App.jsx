@@ -11,9 +11,9 @@ import waypointSvg from "./icons/waypoint.svg";
 
 export const waypointIcon = L.icon({
   iconUrl: waypointSvg,
-  iconSize: [32, 48],
-  iconAnchor: [16, 48],
-  popupAnchor: [0, -48],
+  iconSize: [16, 24],
+  iconAnchor: [8, 24],
+  popupAnchor: [0, -24],
 });
 
 
