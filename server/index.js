@@ -744,17 +744,39 @@ app.post("/api/gpx/from-geojson", (req, res) => {
   }
 });
 app.get("/api/_debug/routes", (req, res) => {
-  const routes = [];
-  for (const layer of app._router.stack) {
-    if (layer.route && layer.route.path) {
-      routes.push({
-        path: layer.route.path,
-        methods: Object.keys(layer.route.methods || {}),
+  try {
+    const router = app?._router;
+    const stack = router?.stack;
+
+    if (!router || !Array.isArray(stack)) {
+      return res.json({
+        ok: false,
+        reason: "No app._router.stack (router not ready or different express version)",
+        hasRouter: Boolean(router),
+        stackType: typeof stack,
       });
     }
+
+    const routes = [];
+
+    for (const layer of stack) {
+      const route = layer?.route;
+      if (!route?.path) continue;
+
+      const methods = Object.keys(route.methods || {}).filter(Boolean);
+      routes.push({ path: route.path, methods });
+    }
+
+    res.json({ ok: true, count: routes.length, routes });
+  } catch (e) {
+    res.status(500).json({
+      ok: false,
+      error: String(e),
+      stack: e?.stack,
+    });
   }
-  res.json(routes);
 });
+
 
 
 // -------------------- Start server --------------------
