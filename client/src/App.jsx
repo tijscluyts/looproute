@@ -7,22 +7,7 @@ import {
   Popup,
   useMap,
 } from "react-leaflet";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
 
-
-import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
-import markerIcon from "leaflet/dist/images/marker-icon.png";
-import markerShadow from "leaflet/dist/images/marker-shadow.png";
-
-// Fix default Leaflet marker icons for Vite / Vercel builds
-delete L.Icon.Default.prototype._getIconUrl;
-
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: markerIcon2x,
-  iconUrl: markerIcon,
-  shadowUrl: markerShadow,
-});
 
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5050";
