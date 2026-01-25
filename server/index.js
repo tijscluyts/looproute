@@ -743,6 +743,19 @@ app.post("/api/gpx/from-geojson", (req, res) => {
     res.status(500).json({ error: "GPX generation failed", details: String(err) });
   }
 });
+app.get("/api/_debug/routes", (req, res) => {
+  const routes = [];
+  for (const layer of app._router.stack) {
+    if (layer.route && layer.route.path) {
+      routes.push({
+        path: layer.route.path,
+        methods: Object.keys(layer.route.methods || {}),
+      });
+    }
+  }
+  res.json(routes);
+});
+
 
 // -------------------- Start server --------------------
 
