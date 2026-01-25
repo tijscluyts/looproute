@@ -526,7 +526,7 @@ function sampleCoordsEvenly(coordsLngLat, n) {
 
 // -------------------- Routes --------------------
 
-app.get("/api/health", (req, res) => res.json({ ok: true }));
+app.get("/api/health", (req, res) => res.json({ ok: true, build: "debug-1" }));
 
 app.get("/api/debug-key", (req, res) => {
   const key = process.env.ORS_API_KEY;
