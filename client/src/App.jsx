@@ -7,7 +7,14 @@ import {
   Popup,
   useMap,
 } from "react-leaflet";
+import waypointSvg from "./icons/waypoint.svg";
 
+export const waypointIcon = L.icon({
+  iconUrl: waypointSvg,
+  iconSize: [32, 48],
+  iconAnchor: [16, 48],
+  popupAnchor: [0, -48],
+});
 
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5050";
@@ -465,15 +472,19 @@ export default function App() {
         <MapClickHandler enabled={mapClickEnabledForStart} onSelect={setPos} />
         <MapClickHandler enabled={mapClickEnabledForWaypoints} onSelect={addWaypoint} />
 
-        {pos && (
-          <Marker position={[pos.lat, pos.lng]}>
-            <Popup>Start location</Popup>
+         {pos && (
+          <Marker position={[pos.lat, pos.lng]} icon={waypointIcon}>
+            <Popup>Start</Popup>
           </Marker>
         )}
 
         {waypoints.map((wp, i) => (
-          <Marker key={`${wp.lat}-${wp.lng}-${i}`} position={[wp.lat, wp.lng]}>
-            <Popup>Waypoint #{i + 1}</Popup>
+          <Marker
+            key={i}
+            position={[wp.lat, wp.lng]}
+            icon={waypointIcon}
+          >
+            <Popup>Waypoint {i + 1}</Popup>
           </Marker>
         ))}
 
