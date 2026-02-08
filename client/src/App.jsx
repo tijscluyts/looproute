@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, Fragment } from "react";
-import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import waypointSvg from "./icons/waypoint.svg";
