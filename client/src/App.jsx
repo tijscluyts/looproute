@@ -1,6 +1,25 @@
 import { useEffect, useMemo, useState } from "react";
 import "leaflet-polylinedecorator";
 import { Fragment } from "react";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+
+import waypointSvg from "./icons/waypoint.svg";
+import startSvg from "./icons/waypoint.svg"; // if you don't have start.svg, reuse waypoint
+
+const StartIcon = L.icon({
+  iconUrl: startSvg,
+  iconSize: [34, 34],
+  iconAnchor: [17, 34],
+  popupAnchor: [0, -30],
+});
+
+const WaypointIcon = L.icon({
+  iconUrl: waypointSvg,
+  iconSize: [28, 28],
+  iconAnchor: [14, 28],
+  popupAnchor: [0, -24],
+});
 
 import {
   MapContainer,
@@ -620,13 +639,13 @@ export default function App() {
         <MapClickHandler enabled={mapClickEnabledForWaypoints} onSelect={addWaypoint} />
 
         {pos && (
-          <Marker position={[pos.lat, pos.lng]}>
+          <Marker position={[pos.lat, pos.lng]} icon={StartIcon}>
             <Popup>Start location</Popup>
           </Marker>
         )}
 
         {waypoints.map((wp, i) => (
-          <Marker key={`${wp.lat}-${wp.lng}-${i}`} position={[wp.lat, wp.lng]}>
+          <Marker key={`${wp.lat}-${wp.lng}-${i}`} position={[wp.lat, wp.lng]} icon={WaypointIcon}>
             <Popup>Waypoint #{i + 1}</Popup>
           </Marker>
         ))}
