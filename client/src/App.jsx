@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import "leaflet-polylinedecorator";
+import { Fragment } from "react";
+
 import {
   MapContainer,
   TileLayer,
@@ -7,17 +10,10 @@ import {
   Popup,
   useMap,
 } from "react-leaflet";
-import waypointSvg from "./icons/waypoint.svg";
-
-export const waypointIcon = L.icon({
-  iconUrl: waypointSvg,
-  iconSize: [16, 24],
-  iconAnchor: [8, 24],
-  popupAnchor: [0, -24],
-});
-
+import L from "leaflet";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:5050";
+
 
 function geojsonToLatLngs(geojson) {
   const coords = geojson?.features?.[0]?.geometry?.coordinates;
@@ -32,24 +28,24 @@ const EUROPE_BOUNDS = [
 ];
 
 // Map camera controller
-function MapController({ pos, polyline }) {
+function MapController({ pos, polyline, fitAfterGenerate }) {
   const map = useMap();
 
   useEffect(() => {
     if (!pos) return;
-    const target = [pos.lat, pos.lng];
-    const zoom = 15;
-    map.flyTo(target, zoom, { animate: true, duration: 1.2 });
+    map.flyTo([pos.lat, pos.lng], 15, { animate: true, duration: 1.2 });
   }, [pos, map]);
 
   useEffect(() => {
+    if (!fitAfterGenerate) return;
     if (!polyline || polyline.length < 2) return;
-    const bounds = L.latLngBounds(polyline);
-    map.fitBounds(bounds, { padding: [30, 30] });
-  }, [polyline, map]);
+
+    map.fitBounds(L.latLngBounds(polyline), { padding: [30, 30] });
+  }, [polyline, map, fitAfterGenerate]);
 
   return null;
 }
+
 
 /**
  * Generic map click handler
@@ -106,14 +102,16 @@ function RouteSegments({
   avoidMode,
   blockedSegments,
   setBlockedSegments,
+  rangeStartIdx,
+  setRangeStartIdx,
+  setLastBlockedRange,
 }) {
+
   const map = useMap();
 
   if (!polyline || polyline.length < 2) return null;
 
-  function handleClickOnRoute(e) {
-    if (!avoidMode) return;
-
+  function findClosestSegmentIndex(e) {
     const P_ll = e.latlng;
     const P = map.latLngToLayerPoint(P_ll);
 
@@ -134,39 +132,151 @@ function RouteSegments({
       }
     }
 
-    if (bestIdx >= 0) {
-      setBlockedSegments((prev) => {
-        const next = new Set(prev);
-        if (next.has(bestIdx)) next.delete(bestIdx);
-        else next.add(bestIdx);
-        return next;
-      });
+    return bestIdx;
+  }
+
+  function toggleRange(startIdx, endIdx) {
+    const lo = Math.min(startIdx, endIdx);
+    const hi = Math.max(startIdx, endIdx);
+
+    setBlockedSegments((prev) => {
+      const next = new Set(prev);
+
+      // Decide action:
+      // If every segment in range is already blocked -> unblock all.
+      // Else -> block all.
+      let allBlocked = true;
+      for (let i = lo; i <= hi; i++) {
+        if (!next.has(i)) {
+          allBlocked = false;
+          break;
+        }
+      }
+
+      if (allBlocked) {
+        for (let i = lo; i <= hi; i++) next.delete(i);
+      } else {
+        for (let i = lo; i <= hi; i++) next.add(i);
+      }
+
+      return next;
+    });
+  }
+
+  function handleClickOnRoute(e) {
+    if (!avoidMode) return;
+
+    const idx = findClosestSegmentIndex(e);
+    if (idx < 0) return;
+
+    // First click: set start
+    if (rangeStartIdx == null) {
+      setRangeStartIdx(idx);
+      return;
     }
+
+    // Second click: toggle whole range, then reset start
+    toggleRange(rangeStartIdx, idx);
+
+    // ✅ remember the last selected range for backend reroute
+    const start = Math.min(rangeStartIdx, idx);
+    const end = Math.max(rangeStartIdx, idx);
+    setLastBlockedRange({ startIdx: start, endIdx: end });
+
+    setRangeStartIdx(null);
+
   }
 
   const lines = [];
   for (let i = 0; i < polyline.length - 1; i++) {
     const seg = [polyline[i], polyline[i + 1]];
     const isBlocked = blockedSegments.has(i);
+    const isRangeStart = avoidMode && rangeStartIdx === i;
 
     lines.push(
-      <Polyline
-        key={`seg-${i}`}
-        positions={seg}
-        pathOptions={{
-          color: isBlocked ? "red" : "blue",
-          weight: isBlocked ? 6 : 5,
-          opacity: 0.9,
-        }}
-        eventHandlers={{ click: handleClickOnRoute }}
-      />
+      <Fragment key={`seg-${i}`}>
+        <Polyline
+          positions={seg}
+          pathOptions={{
+            color: isBlocked ? "red" : isRangeStart ? "orange" : "blue",
+            weight: isBlocked ? 6 : isRangeStart ? 7 : 5,
+            opacity: 0.9,
+          }}
+          eventHandlers={{ click: handleClickOnRoute }}
+        />
+      </Fragment>
     );
   }
 
   return <>{lines}</>;
 }
 
+function RouteArrows({ polyline }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!polyline || polyline.length < 2) return;
+
+    const latLngs = polyline.map(([lat, lng]) => L.latLng(lat, lng));
+
+    const decorator = L.polylineDecorator(latLngs, {
+      patterns: [
+        {
+          offset: 0,
+          repeat: 200, // bigger spacing = cleaner
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 12,
+            polygon: false,
+            pathOptions: { color: "blue", weight: 3, opacity: 0.9 },
+          }),
+        },
+      ],
+    }).addTo(map);
+
+    return () => map.removeLayer(decorator);
+  }, [map, polyline]);
+
+  return null;
+}
+
+function SegmentArrows({ segment, color }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!segment || segment.length < 2) return;
+
+    const latLngs = segment.map(([lat, lng]) => L.latLng(lat, lng));
+
+    const decorator = L.polylineDecorator(latLngs, {
+      patterns: [
+        {
+          offset: 0,
+          repeat: 120,
+          symbol: L.Symbol.arrowHead({
+            pixelSize: 10,
+            polygon: false,
+            pathOptions: {
+              color,
+              weight: 3,
+              opacity: 0.9,
+            },
+          }),
+        },
+      ],
+    }).addTo(map);
+
+    return () => {
+      map.removeLayer(decorator);
+    };
+  }, [map, segment, color]);
+
+  return null;
+}
+
 export default function App() {
+  const [fitAfterGenerate, setFitAfterGenerate] = useState(false);
+
+
   const [pos, setPos] = useState(null);
   const [distanceKm, setDistanceKm] = useState(7);
   const [preferLowOverlap, setPreferLowOverlap] = useState(true);
@@ -184,8 +294,29 @@ export default function App() {
   // Avoid-road
   const [avoidMode, setAvoidMode] = useState(false);
   const [blockedSegments, setBlockedSegments] = useState(() => new Set());
+  const [rangeStartIdx, setRangeStartIdx] = useState(null); // start segment index for range blocking
+  const [lastBlockedRange, setLastBlockedRange] = useState(null);
 
   const polyline = useMemo(() => geojsonToLatLngs(routeGeo), [routeGeo]);
+
+  useEffect(() => {
+  if (!polyline || polyline.length < 2) return;
+
+  let worst = { i: -1, d: 0, a: null, b: null };
+
+  for (let i = 0; i < polyline.length - 1; i++) {
+    const [lat1, lng1] = polyline[i];
+    const [lat2, lng2] = polyline[i + 1];
+
+    // rough distance (degrees) - enough to detect a crazy jump
+    const d = Math.hypot(lat2 - lat1, lng2 - lng1);
+
+    if (d > worst.d) worst = { i, d, a: polyline[i], b: polyline[i + 1] };
+  }
+
+  console.log("WORST JUMP", worst);
+}, [polyline]);
+
 
   function useMyLocation() {
     if (!navigator.geolocation) {
@@ -216,6 +347,8 @@ export default function App() {
   }
 
   function toggleAvoidMode() {
+    setRangeStartIdx(null);
+
     if (!routeGeo) return;
     setAvoidMode((prev) => !prev);
 
@@ -236,6 +369,12 @@ export default function App() {
   }
 
   async function generateLoop() {
+    setRangeStartIdx(null);
+    setLastBlockedRange(null);
+
+
+    setFitAfterGenerate(true);
+
     if (loading) return;
     if (!pos) {
       alert("Use your location first");
@@ -283,6 +422,10 @@ export default function App() {
   }
 
   async function rerouteAroundBlocked() {
+    setRangeStartIdx(null);
+
+    setFitAfterGenerate(false);
+
     if (loading) return;
     if (!routeGeo || !pos) {
       alert("Generate a route first");
@@ -302,13 +445,17 @@ export default function App() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lat: pos.lat,
-          lng: pos.lng,
-          distanceKm: Number(distanceKm),
-          waypoints,
-          routeGeo,
-          blockedSegments: blockedSegmentsPayload,
-        }),
+        lat: pos.lat,
+        lng: pos.lng,
+        distanceKm: Number(distanceKm),
+        waypoints,
+        routeGeo,
+        blockedSegments: blockedSegmentsPayload,
+
+        // ✅ NEW: tells backend exact blocked range indices
+        blockedRange: lastBlockedRange,
+      }),
+
       });
 
       if (!resp.ok) {
@@ -462,7 +609,7 @@ export default function App() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        <MapController pos={pos} polyline={polyline} />
+        <MapController pos={pos} polyline={polyline} fitAfterGenerate={fitAfterGenerate} />
 
         {/* Map click behavior:
             - avoidMode ON: disabled
@@ -472,19 +619,15 @@ export default function App() {
         <MapClickHandler enabled={mapClickEnabledForStart} onSelect={setPos} />
         <MapClickHandler enabled={mapClickEnabledForWaypoints} onSelect={addWaypoint} />
 
-         {pos && (
-          <Marker position={[pos.lat, pos.lng]} icon={waypointIcon}>
-            <Popup>Start</Popup>
+        {pos && (
+          <Marker position={[pos.lat, pos.lng]}>
+            <Popup>Start location</Popup>
           </Marker>
         )}
 
         {waypoints.map((wp, i) => (
-          <Marker
-            key={i}
-            position={[wp.lat, wp.lng]}
-            icon={waypointIcon}
-          >
-            <Popup>Waypoint {i + 1}</Popup>
+          <Marker key={`${wp.lat}-${wp.lng}-${i}`} position={[wp.lat, wp.lng]}>
+            <Popup>Waypoint #{i + 1}</Popup>
           </Marker>
         ))}
 
@@ -493,7 +636,15 @@ export default function App() {
           avoidMode={avoidMode}
           blockedSegments={blockedSegments}
           setBlockedSegments={setBlockedSegments}
+          rangeStartIdx={rangeStartIdx}
+          setRangeStartIdx={setRangeStartIdx}
+          setLastBlockedRange={setLastBlockedRange}
         />
+
+
+
+        <RouteArrows polyline={polyline} />
+
       </MapContainer>
     </div>
   );

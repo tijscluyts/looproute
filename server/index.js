@@ -8,17 +8,68 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use((req, res, next) => {
-  console.log(`[REQ] ${req.method} ${req.url}`);
-  next();
-});
-
 
 // -------------------- Helpers --------------------
 
 function toRad(deg) {
   return (deg * Math.PI) / 180;
 }
+function metersToDegLat(m) {
+  return m / 111320;
+}
+function metersToDegLon(m, lat) {
+  return m / (111320 * Math.cos((lat * Math.PI) / 180));
+}
+
+// Build a thin rectangular polygon around a segment [lng,lat] -> [lng,lat]
+function segmentBufferPolygon([lng1, lat1], [lng2, lat2], widthM = 12) {
+  const midLat = (lat1 + lat2) / 2;
+  const dLat = metersToDegLat(widthM);
+  const dLon = metersToDegLon(widthM, midLat);
+
+  // perpendicular direction (approx in degrees)
+  const dx = lng2 - lng1;
+  const dy = lat2 - lat1;
+  const len = Math.hypot(dx, dy) || 1;
+
+  const px = (-dy / len) * dLon;
+  const py = (dx / len) * dLat;
+
+  const p1 = [lng1 + px, lat1 + py];
+  const p2 = [lng1 - px, lat1 - py];
+  const p3 = [lng2 - px, lat2 - py];
+  const p4 = [lng2 + px, lat2 + py];
+
+  return [p1, p2, p3, p4, p1];
+}
+
+function buildRouteCorridorPolygons(coordsLngLat, {
+  widthM = 14,
+  skipSegFrom = -1,
+  skipSegTo = -1,
+  skipAroundAIdx = -1,
+  skipAroundBIdx = -1,
+  skipWindow = 3,
+} = {}) {
+  const polys = [];
+  if (!coordsLngLat || coordsLngLat.length < 2) return polys;
+
+  for (let i = 0; i < coordsLngLat.length - 1; i++) {
+    // skip the blocked region (we don't need to avoid it twice)
+    if (skipSegFrom >= 0 && skipSegTo >= 0 && i >= skipSegFrom && i <= skipSegTo) continue;
+
+    // allow leaving/joining near anchors
+    if (skipAroundAIdx >= 0 && Math.abs(i - skipAroundAIdx) <= skipWindow) continue;
+    if (skipAroundBIdx >= 0 && Math.abs(i - skipAroundBIdx) <= skipWindow) continue;
+
+    const A = coordsLngLat[i];
+    const B = coordsLngLat[i + 1];
+    polys.push(segmentBufferPolygon(A, B, widthM));
+  }
+
+  return polys;
+}
+
 
 function haversineM(lat1, lon1, lat2, lon2) {
   const R = 6371000; // m
@@ -161,9 +212,7 @@ function normalizeWaypoints(waypoints) {
     .map((w) => ({ lat: Number(w.lat), lng: Number(w.lng) }));
 }
 
-function metersToDegLat(m) {
-  return m / 111320;
-}
+
 
 function metersToDegLng(m, atLat) {
   return m / (111320 * Math.cos(toRad(atLat)));
@@ -531,28 +580,7 @@ function sampleCoordsEvenly(coordsLngLat, n) {
 
 // -------------------- Routes --------------------
 
-app.get("/api/health", (req, res) => res.json({ ok: true, build: "debug-1" }));
-
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
-
-app.get("/api/_debug/info", (req, res) => {
-  let expressVersion = null;
-  try {
-    expressVersion = require("express/package.json").version;
-  } catch (e) {
-    expressVersion = "unknown";
-  }
-
-  res.json({
-    ok: true,
-    expressVersion,
-    has_app__router: Boolean(app._router),
-    has_app_router: Boolean(app.router),
-    app_keys_sample: Object.keys(app).slice(0, 30),
-  });
-});
-
+app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 app.get("/api/debug-key", (req, res) => {
   const key = process.env.ORS_API_KEY;
@@ -684,10 +712,15 @@ app.post("/api/loop", async (req, res) => {
   }
 });
 
-// Reroute around blocked roads (keeps route shape, detours around avoid polygons)
+// Reroute around blocked roads by "cut-and-bridge":
+// Keep original route, replace only the blocked section with a detour A->B using avoid_polygons.
+// Reroute around blocked roads by "cut-and-bridge":
+// Keep original route, replace only the blocked section with a detour A->B using avoid_polygons.
+// Also avoid overlapping the existing (blue) route by adding a thin avoid corridor around it,
+// except near the join points (anchors) so we can leave/rejoin the route.
 app.post("/api/reroute", async (req, res) => {
   try {
-    const { lat, lng, distanceKm, waypoints, routeGeo, blockedSegments } = req.body;
+    const { lat, lng, distanceKm, waypoints, routeGeo, blockedSegments, blockedRange } = req.body;
 
     if (!lat || !lng || !distanceKm || !routeGeo) {
       return res.status(400).json({ error: "Missing lat/lng/distanceKm/routeGeo" });
@@ -696,56 +729,169 @@ app.post("/api/reroute", async (req, res) => {
     const startLat = Number(lat);
     const startLng = Number(lng);
 
+    // 1) Extract base route coordinates (LngLat) from current routeGeo
+    const baseCoords = geojsonToCoordsLngLat(routeGeo); // [[lng,lat], ...]
+    if (!baseCoords || baseCoords.length < 4) {
+      return res.status(400).json({ error: "routeGeo has no usable coordinates" });
+    }
+
+    // 2) Determine blocked range indices (segment indices)
+    // Segment i is between point i and i+1
+    let iStart = null;
+    let iEnd = null;
+
+    if (
+      blockedRange &&
+      Number.isFinite(blockedRange.startIdx) &&
+      Number.isFinite(blockedRange.endIdx)
+    ) {
+      iStart = Math.max(0, Math.min(baseCoords.length - 2, blockedRange.startIdx));
+      iEnd = Math.max(0, Math.min(baseCoords.length - 2, blockedRange.endIdx));
+    } else {
+      // fallback: infer from blockedSegments (best-effort)
+      if (!Array.isArray(blockedSegments) || blockedSegments.length === 0) {
+        return res.status(400).json({ error: "No blockedRange and blockedSegments empty" });
+      }
+
+      const nearestIndex = (lat, lng) => {
+        let best = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < baseCoords.length; i++) {
+          const [clng, clat] = baseCoords[i];
+          const d = (clat - lat) * (clat - lat) + (clng - lng) * (clng - lng);
+          if (d < bestD) {
+            bestD = d;
+            best = i;
+          }
+        }
+        return best;
+      };
+
+      const idxs = blockedSegments.map((s) => nearestIndex(s.a.lat, s.a.lng));
+      iStart = Math.max(0, Math.min(...idxs));
+      iEnd = Math.max(0, Math.max(...idxs));
+      iEnd = Math.min(iEnd, baseCoords.length - 2);
+    }
+
+    if (iStart > iEnd) [iStart, iEnd] = [iEnd, iStart];
+
+    // 3) Choose anchors around the blocked range
+    const bufferPts = 3; // tweak: 2–6 depending on route point density
+    const aIdx = Math.max(0, iStart - bufferPts);
+    const bIdx = Math.min(baseCoords.length - 1, (iEnd + 1) + bufferPts);
+
+    if (bIdx <= aIdx + 1) {
+      return res.status(400).json({ error: "Blocked range too small / invalid for anchoring" });
+    }
+
+    const A = baseCoords[aIdx]; // [lng,lat]
+    const B = baseCoords[bIdx]; // [lng,lat]
+
+    // 4) RED: avoid polygons from blocked segments (corridor around red part)
     const avoidPolys = buildAvoidPolygons(blockedSegments, 18);
     if (!avoidPolys) {
       return res.status(400).json({ error: "No valid blockedSegments received" });
     }
 
-    const options = { avoid_polygons: avoidPolys };
-    const wps = normalizeWaypoints(waypoints);
+    // 5) BLUE: avoid corridor around the existing route so detour doesn't overlap it,
+    // but leave gaps around anchors so we can depart and rejoin the route.
+    const blueAvoidPolys = buildRouteCorridorPolygons(baseCoords, {
+      widthM: 14,        // corridor thickness (meters)
+      skipSegFrom: iStart,
+      skipSegTo: iEnd,
+      skipAroundAIdx: aIdx,
+      skipAroundBIdx: bIdx,
+      skipWindow: 3,     // how many segments around anchors to allow
+    });
 
-    // Sample a few "shape points" from current route so reroute stays similar
-    const baseCoords = geojsonToCoordsLngLat(routeGeo);
-    const sampled = sampleCoordsEvenly(baseCoords, 7); // keep small to avoid ORS limits
+    // 6) Merge into one MultiPolygon for ORS
+    const mergedAvoid = {
+      type: "MultiPolygon",
+      coordinates: [
+        ...(avoidPolys.coordinates || []),
+        ...blueAvoidPolys.map((ring) => [ring]),
+      ],
+    };
 
-    // Build coordinates: start -> sampled middle points -> user waypoints -> start
-    const coordinates = [];
-    coordinates.push([startLng, startLat]);
+    const options = { avoid_polygons: mergedAvoid };
 
-    // skip first+last from sampled (they're close to start in a loop)
-    for (let i = 1; i < sampled.length - 1; i++) {
-      coordinates.push(sampled[i]);
-    }
-
-    for (const wp of wps) {
-      coordinates.push([wp.lng, wp.lat]);
-    }
-
-    coordinates.push([startLng, startLat]);
-
-    const geojson = await orsDirectionsGeoJson({
+    // 7) Ask ORS for detour from A -> B, avoiding both red + blue corridors
+    const detourGeo = await orsDirectionsGeoJson({
       apiKey: process.env.ORS_API_KEY,
-      coordinates,
+      coordinates: [A, B],
       profile: "foot-walking",
       options,
     });
 
-    const feat = geojson?.features?.[0];
-    const coordsLngLat = feat?.geometry?.coordinates || [];
+    const detFeat = detourGeo?.features?.[0];
+    const detourCoords = detFeat?.geometry?.coordinates || [];
+    if (detourCoords.length < 2) {
+      return res.status(502).json({
+        error: "Detour failed",
+        details:
+          "ORS returned no detour geometry (blocked too much or corridor too wide). Try smaller block or reduce corridor width.",
+      });
+    }
 
-    const distFromOrs =
-      feat?.properties?.summary?.distance ??
-      feat?.properties?.segments?.[0]?.distance ??
-      null;
+    // 8) Splice: prefix + detour + suffix
+    const prefix = baseCoords.slice(0, aIdx + 1);
+    const suffix = baseCoords.slice(bIdx);
 
-    const distM = distFromOrs ?? lineDistanceM(coordsLngLat);
-    const ov = overlapRatio(coordsLngLat, 20);
+    let detourMid = detourCoords;
+
+    // Drop first if it equals A
+    if (
+      detourMid.length >= 2 &&
+      Math.abs(detourMid[0][0] - A[0]) < 1e-10 &&
+      Math.abs(detourMid[0][1] - A[1]) < 1e-10
+    ) {
+      detourMid = detourMid.slice(1);
+    }
+
+    // Drop last if it equals B (suffix already starts at B)
+    const last = detourMid[detourMid.length - 1];
+    if (
+      detourMid.length >= 2 &&
+      Math.abs(last[0] - B[0]) < 1e-10 &&
+      Math.abs(last[1] - B[1]) < 1e-10
+    ) {
+      detourMid = detourMid.slice(0, -1);
+    }
+
+    const merged = prefix.concat(detourMid, suffix);
+
+    // 9) Build GeoJSON response
+    const geojson = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: {
+            summary: { distance: lineDistanceM(merged) },
+          },
+          geometry: {
+            type: "LineString",
+            coordinates: merged,
+          },
+        },
+      ],
+    };
+
+    const distM = lineDistanceM(merged);
+    const ov = overlapRatio(merged, 20);
 
     return res.json({
       distM,
       overlap: ov,
       attemptsTried: 1,
       geojson,
+      debug: {
+        blockedRange: { iStart, iEnd },
+        anchors: { aIdx, bIdx },
+        detourPoints: detourCoords.length,
+        mergedPoints: merged.length,
+        blueAvoidCount: blueAvoidPolys.length,
+      },
     });
   } catch (err) {
     res.status(err?.status || 500).json({
@@ -754,6 +900,8 @@ app.post("/api/reroute", async (req, res) => {
     });
   }
 });
+
+
 
 // GPX from GeoJSON
 app.post("/api/gpx/from-geojson", (req, res) => {
@@ -769,43 +917,10 @@ app.post("/api/gpx/from-geojson", (req, res) => {
     res.status(500).json({ error: "GPX generation failed", details: String(err) });
   }
 });
-app.get("/api/_debug/routes", (req, res) => {
-  try {
-    const stack = app._router?.stack || app.router?.stack;
-
-    if (!Array.isArray(stack)) {
-      return res.json({
-        ok: false,
-        reason: "No router stack found on app._router.stack or app.router.stack",
-        has_app__router: Boolean(app._router),
-        has_app_router: Boolean(app.router),
-        stackType: typeof stack,
-      });
-    }
-
-    const routes = [];
-    for (const layer of stack) {
-      const route = layer?.route;
-      if (!route?.path) continue;
-
-      routes.push({
-        path: route.path,
-        methods: Object.keys(route.methods || {}).filter(Boolean),
-      });
-    }
-
-    res.json({ ok: true, count: routes.length, routes });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e), stack: e?.stack });
-  }
-});
-
-
-
 
 // -------------------- Start server --------------------
 
 const port = process.env.PORT || 5050;
 app.listen(port, () => {
-  console.log(`Server listening on http://localhost:${port}`);
+  console.log(`Server listening on port${port}`);
 });
