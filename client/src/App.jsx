@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
-import "leaflet-polylinedecorator";
-import { Fragment } from "react";
+import { useEffect, useMemo, useState, Fragment } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 import waypointSvg from "./icons/waypoint.svg";
-import startSvg from "./icons/waypoint.svg"; // if you don't have start.svg, reuse waypoint
+import startSvg from "./icons/waypoint.svg"; // reuse is fine
+
 
 const StartIcon = L.icon({
   iconUrl: startSvg,
