@@ -236,21 +236,9 @@ function RouteArrows({ polyline }) {
 
     const latLngs = polyline.map(([lat, lng]) => L.latLng(lat, lng));
 
-    const decorator = L.polylineDecorator(latLngs, {
-      patterns: [
-        {
-          offset: 0,
-          repeat: 200, // bigger spacing = cleaner
-          symbol: L.Symbol.arrowHead({
-            pixelSize: 12,
-            polygon: false,
-            pathOptions: { color: "blue", weight: 3, opacity: 0.9 },
-          }),
-        },
-      ],
-    }).addTo(map);
+    ;
 
-    return () => map.removeLayer(decorator);
+    
   }, [map, polyline]);
 
   return null;
@@ -264,31 +252,54 @@ function SegmentArrows({ segment, color }) {
 
     const latLngs = segment.map(([lat, lng]) => L.latLng(lat, lng));
 
-    const decorator = L.polylineDecorator(latLngs, {
-      patterns: [
-        {
-          offset: 0,
-          repeat: 120,
-          symbol: L.Symbol.arrowHead({
-            pixelSize: 10,
-            polygon: false,
-            pathOptions: {
-              color,
-              weight: 3,
-              opacity: 0.9,
-            },
-          }),
-        },
-      ],
-    }).addTo(map);
+    
 
-    return () => {
-      map.removeLayer(decorator);
-    };
+    
   }, [map, segment, color]);
 
   return null;
 }
+function RouteArrows({ polyline }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!polyline || polyline.length < 2) return;
+
+    const arrows = [];
+
+    for (let i = 0; i < polyline.length - 1; i += 8) {
+      const [lat1, lng1] = polyline[i];
+      const [lat2, lng2] = polyline[i + 1];
+
+      const angle =
+        (Math.atan2(lng2 - lng1, lat2 - lat1) * 180) / Math.PI;
+
+      const icon = L.divIcon({
+        className: "",
+        html: `
+          <div style="
+            transform: rotate(${angle}deg);
+            font-size: 18px;
+            color: blue;
+            line-height: 1;
+          ">➤</div>
+        `,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      });
+
+      const marker = L.marker([lat1, lng1], { icon }).addTo(map);
+      arrows.push(marker);
+    }
+
+    return () => {
+      arrows.forEach((m) => map.removeLayer(m));
+    };
+  }, [map, polyline]);
+
+  return null;
+}
+
 
 export default function App() {
   const [fitAfterGenerate, setFitAfterGenerate] = useState(false);
