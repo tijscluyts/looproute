@@ -228,21 +228,7 @@ function RouteSegments({
   return <>{lines}</>;
 }
 
-function RouteArrows({ polyline }) {
-  const map = useMap();
 
-  useEffect(() => {
-    if (!polyline || polyline.length < 2) return;
-
-    const latLngs = polyline.map(([lat, lng]) => L.latLng(lat, lng));
-
-    ;
-
-    
-  }, [map, polyline]);
-
-  return null;
-}
 
 function SegmentArrows({ segment, color }) {
   const map = useMap();
